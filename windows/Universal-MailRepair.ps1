@@ -619,10 +619,16 @@ foreach ($hostTarget in $TargetHosts) {
 
     # Test SSL Certificate on Port 443 and 993/465
     Write-Host "`n[*] Inspecting SSL/TLS Certificate..." -ForegroundColor Yellow
-    $sslCheck = Test-SslCertificate -HostName $hostTarget -Port 443
-    if (-not $sslCheck.Valid) {
-        # Fallback to test SSL on IMAP 993
+    if ($hostTarget -match "^mail\.") {
         $sslCheck = Test-SslCertificate -HostName $hostTarget -Port 993
+        if (-not $sslCheck.Valid) {
+            $sslCheck = Test-SslCertificate -HostName $hostTarget -Port 443
+        }
+    } else {
+        $sslCheck = Test-SslCertificate -HostName $hostTarget -Port 443
+        if (-not $sslCheck.Valid) {
+            $sslCheck = Test-SslCertificate -HostName $hostTarget -Port 993
+        }
     }
 
     if ($sslCheck.Valid) {
@@ -689,6 +695,7 @@ if ($isInteractive) {
     try { Stop-Transcript | Out-Null } catch {}; Exit 0
 }
 }
+
 
 
 
