@@ -33,7 +33,7 @@ param(
 # ---------------------------------------------------------------------------
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     Write-Error "ERROR: This script must be run as Administrator. Right-click PowerShell and choose 'Run as Administrator'."
-    Stop-Transcript -ErrorAction SilentlyContinue | Out-Null; Exit 1
+    try { Stop-Transcript | Out-Null } catch {}; Exit 1
 }
 
 $logDir     = Join-Path $env:ProgramData "UniversalMailRepair"
@@ -263,7 +263,7 @@ else {
         elseif ($choice -eq "3") { $opMode = "Rollback"; $validChoice = $true }
         elseif ($choice -eq "4") { $opMode = "ViewStatus"; $validChoice = $true }
         elseif ($choice -eq "5") { $opMode = "InspectDns"; $validChoice = $true }
-        elseif ($choice -eq "0") { Stop-Transcript -ErrorAction SilentlyContinue | Out-Null; Exit 0 }
+        elseif ($choice -eq "0") { try { Stop-Transcript | Out-Null } catch {}; Exit 0 }
         else { Write-Warning "Invalid choice. Please enter a number between 0 and 5.`n" }
     }
 }
@@ -314,7 +314,7 @@ if ($opMode -notin @("Rollback", "ViewStatus") -and (-not $TargetHosts -or $Targ
             Start-Sleep -Seconds 2
             continue
         } else {
-            Stop-Transcript -ErrorAction SilentlyContinue | Out-Null; Exit 1
+            try { Stop-Transcript | Out-Null } catch {}; Exit 1
         }
     }
     $TargetHosts = $inputHost -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne "" }
@@ -333,7 +333,7 @@ if ($opMode -eq "InspectDns") {
         if ($navChoice -eq "0") { Exit 0 }
         continue
     } else {
-        Stop-Transcript -ErrorAction SilentlyContinue | Out-Null; Exit 0
+        try { Stop-Transcript | Out-Null } catch {}; Exit 0
     }
 }
 
@@ -378,7 +378,7 @@ if ($opMode -eq "ViewStatus") {
         if ($navChoice -eq "0") { Exit 0 }
         continue
     } else {
-        Stop-Transcript -ErrorAction SilentlyContinue | Out-Null; Exit 0
+        try { Stop-Transcript | Out-Null } catch {}; Exit 0
     }
 }
 
@@ -394,7 +394,7 @@ if ($opMode -eq "Rollback") {
             Start-Sleep -Seconds 3
             continue
         } else {
-            Stop-Transcript -ErrorAction SilentlyContinue | Out-Null; Exit 1
+            try { Stop-Transcript | Out-Null } catch {}; Exit 1
         }
     }
 
@@ -444,7 +444,7 @@ if ($opMode -eq "Rollback") {
         if ($navChoice -eq "0") { Exit 0 }
         continue
     } else {
-        Stop-Transcript -ErrorAction SilentlyContinue | Out-Null; Exit 0
+        try { Stop-Transcript | Out-Null } catch {}; Exit 0
     }
 }
 
@@ -468,7 +468,7 @@ if ($opMode -eq "Repair") {
             Start-Sleep -Seconds 3
             continue
         } else {
-            Stop-Transcript -ErrorAction SilentlyContinue | Out-Null; Exit 1
+            try { Stop-Transcript | Out-Null } catch {}; Exit 1
         }
     }
 
@@ -682,7 +682,8 @@ if ($isInteractive) {
     if ($navChoice -eq "0") { Exit 0 }
     continue
 } else {
-    Stop-Transcript -ErrorAction SilentlyContinue | Out-Null; Exit 0
+    try { Stop-Transcript | Out-Null } catch {}; Exit 0
 }
 }
+
 
