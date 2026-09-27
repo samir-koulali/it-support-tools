@@ -1,15 +1,22 @@
-# Windows Mail Connection Repair Tool
+# Windows Mail Connection & Server Diagnostic Tool
 
 **Script:** `Universal-MailRepair.ps1`
 
-This tool was specifically designed to resolve connectivity issues where certain ISPs (such as those in Algeria) serve broken IPv6 addresses or randomly block IPv4 DNS resolution for mail servers. It restores reliable connectivity by bypassing the local router's DNS, enforcing reliable public DNS, and disabling broken IPv6 routing.
+This tool was specifically designed to resolve connectivity issues where certain ISPs (such as those in Algeria) serve broken IPv6 addresses or randomly block IPv4 DNS resolution for mail and hosting servers. It restores reliable connectivity by bypassing the local router's DNS, enforcing reliable public DNS, and disabling broken IPv6 routing.
 
 ### Features
 * **Interactive Menu:** Run the script and choose your operation mode on the fly.
 * **Repair Mode:** Automatically disables IPv6 on active adapters and sets a custom DNS (Cloudflare, Google, Quad9, or OpenDNS).
-* **Test Mode:** Runs diagnostics for DNS resolution, IMAP (993), and SMTP (465, 587).
-* **Rollback Mode:** Safely undoes any network changes using an automated backup file.
-* **View Status:** Quickly list all active physical network adapters and their current DNS settings.
+* **Test Mode:** Runs non-destructive network and port diagnostics without touching network settings.
+* **Full DNS Inspector:** Inspects A, AAAA, CNAME, MX, Nameservers (NS), SPF (`v=spf1`), DMARC (`_dmarc`), and Autodiscover/Autoconfig records.
+* **Hosting & Mail Port Test Suite:**
+  * **Inbound Mail:** IMAP SSL (993), POP3 SSL (995)
+  * **Outbound Mail:** SMTP SSL (465), SMTP STARTTLS (587)
+  * **Hosting & Webmail Panels:** Webmail SSL (2096), cPanel/N0C SSL (2083), HTTPS (443)
+* **SSL / TLS Certificate Inspector:** Validates remote certificate expiration date, issuer, days remaining, and detects expired or mismatched certificates.
+* **Rollback Mode:** Safely restores original DHCP/static DNS and IPv6 states from an automated backup file.
+* **View Status:** Quickly lists physical adapters, connection statuses, and active DNS configurations.
+* **One-Click Clipboard Export:** Option to copy the entire diagnostic summary directly into your clipboard to paste into a support ticket or client message.
 
 ### Quick Start (Run directly from the cloud)
 You don't need to manually download the script to use it. You can run it directly from GitHub using PowerShell.
