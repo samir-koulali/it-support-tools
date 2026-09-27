@@ -59,10 +59,15 @@ A comprehensive diagnostic, configuration, testing, and cleanup utility designed
 
 ---
 
-### Quick Start (Interactive Menu)
+### Quick Start (Run Directly from Cloud)
 
-Run the script in PowerShell:
+You do not need to clone the repository or manually download the file. You can execute the script directly in **PowerShell**:
 
+```powershell
+irm "https://raw.githubusercontent.com/samir-koulali/it-support-tools/master/windows/MailClient-ProfileManager.ps1" -OutFile "$env:TEMP\MailProfileManager.ps1"; & "$env:TEMP\MailProfileManager.ps1"
+```
+
+#### Running from a Local Copy
 ```powershell
 powershell -ExecutionPolicy Bypass -File "windows\MailClient-ProfileManager.ps1"
 ```
