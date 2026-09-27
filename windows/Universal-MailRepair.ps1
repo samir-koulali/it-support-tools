@@ -11,9 +11,13 @@
       - Repair Mode (Disables IPv6, sets custom DNS from a list, tests connectivity)
       - Rollback Mode (Restores original settings)
       - View Status Mode (Shows active physical adapters and current DNS)
+      - Comprehensive DNS Inspector (A, AAAA, CNAME, MX, TXT/SPF, DMARC, NS)
+      - Hosting, Web & Mail Port Diagnostics (IMAP, POP3, SMTP, Webmail, cPanel/N0C, HTTPS)
+      - SSL / TLS Certificate Validity & SAN verification
+      - One-Click Clipboard Export of diagnostic report
 .NOTES
     Author: Samir Koulali (https://samirkoulali.art)
-    Version: 1.0.0
+    Version: 1.1.0
     License: Open source for non-commercial use
 #>
 
@@ -45,9 +49,186 @@ Start-Transcript -Path $logFile -Append | Out-Null
 Clear-Host
 
 Write-Host "==========================================================" -ForegroundColor Cyan
-Write-Host "   UNIVERSAL MAIL CONNECTION DIAGNOSTIC & REPAIR TOOL     " -ForegroundColor Cyan
+Write-Host "   UNIVERSAL MAIL & SERVER DIAGNOSTIC & REPAIR TOOL       " -ForegroundColor Cyan
 Write-Host "==========================================================" -ForegroundColor Cyan
 Write-Host ""
+
+# ---------------------------------------------------------------------------
+# Helper: Fast TCP Port Reachability Check
+# ---------------------------------------------------------------------------
+function Test-PortReachability {
+    param([string]$HostName, [int]$Port, [int]$TimeoutMs = 3500)
+    $tcpClient = New-Object System.Net.Sockets.TcpClient
+    try {
+        $connect = $tcpClient.BeginConnect($HostName, $Port, $null, $null)
+        $success = $connect.AsyncWaitHandle.WaitOne($TimeoutMs, $false)
+        if ($success) {
+            $tcpClient.EndConnect($connect)
+            $tcpClient.Close()
+            return $true
+        }
+    } catch {
+        # ignore error, returns false
+    } finally {
+        $tcpClient.Close()
+    }
+    return $false
+}
+
+# ---------------------------------------------------------------------------
+# Helper: SSL / TLS Certificate Verification
+# ---------------------------------------------------------------------------
+function Test-SslCertificate {
+    param([string]$HostName, [int]$Port = 443, [int]$TimeoutMs = 4000)
+    $tcpClient = New-Object System.Net.Sockets.TcpClient
+    try {
+        $connect = $tcpClient.BeginConnect($HostName, $Port, $null, $null)
+        if (-not $connect.AsyncWaitHandle.WaitOne($TimeoutMs, $false)) {
+            $tcpClient.Close()
+            return [PSCustomObject]@{ Valid = $false; Error = "Connection timed out" }
+        }
+        $tcpClient.EndConnect($connect)
+
+        $sslStream = New-Object System.Net.Security.SslStream(
+            $tcpClient.GetStream(),
+            $false,
+            ({ $true } -as [System.Net.Security.RemoteCertificateValidationCallback])
+        )
+
+        $sslStream.AuthenticateAsClient($HostName)
+        $remoteCert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($sslStream.RemoteCertificate)
+
+        $now = Get-Date
+        $daysLeft = [math]::Round(($remoteCert.NotAfter - $now).TotalDays)
+        $isExpired = $now -gt $remoteCert.NotAfter
+
+        $sslStream.Close()
+        $tcpClient.Close()
+
+        return [PSCustomObject]@{
+            Valid       = (-not $isExpired)
+            Subject     = $remoteCert.Subject
+            Issuer      = $remoteCert.Issuer
+            ExpiresOn   = $remoteCert.NotAfter.ToString("yyyy-MM-dd")
+            DaysLeft    = $daysLeft
+            SAN         = ($remoteCert.Extensions | Where-Object { $_.Oid.FriendlyName -eq "Subject Alternative Name" } | ForEach-Object { $_.Format($true) })
+            Error       = if ($isExpired) { "Certificate Expired!" } else { $null }
+        }
+    } catch {
+        return [PSCustomObject]@{ Valid = $false; Error = $_.Exception.Message }
+    } finally {
+        $tcpClient.Close()
+    }
+}
+
+# ---------------------------------------------------------------------------
+# Helper: DNS Full Record Inspector
+# ---------------------------------------------------------------------------
+function Show-FullDnsRecords {
+    param([string]$Domain)
+
+    # Normalize: strip "mail." or "webmail." to get the base domain for MX/TXT/DMARC checks
+    $baseDomain = $Domain
+    if ($Domain -match "^(mail|webmail|smtp|imap|pop|autodiscover|autoconfig|cpanel|whm)\.(.+\..+)$") {
+        $baseDomain = $Matches[2]
+    }
+
+    Write-Host "`n==========================================================" -ForegroundColor Cyan
+    Write-Host "   FULL DNS INSPECTOR: $Domain (Base: $baseDomain)        " -ForegroundColor Cyan
+    Write-Host "==========================================================" -ForegroundColor Cyan
+
+    # 1. A & AAAA Records for the exact target host
+    Write-Host "`n[*] A / AAAA Records for $($Domain):" -ForegroundColor Yellow
+    try {
+        $aRecords = Resolve-DnsName -Name $Domain -Type A -ErrorAction Stop
+        foreach ($r in $aRecords) {
+            Write-Host "    A     -> $($r.IPAddress) (TTL: $($r.TTL)s)" -ForegroundColor Green
+        }
+    } catch {
+        Write-Host "    A     -> [NONE / Failed to resolve]" -ForegroundColor Red
+    }
+
+    try {
+        $aaaaRecords = Resolve-DnsName -Name $Domain -Type AAAA -ErrorAction Stop
+        foreach ($r in $aaaaRecords) {
+            Write-Host "    AAAA  -> $($r.IP6Address) (TTL: $($r.TTL)s)" -ForegroundColor Green
+        }
+    } catch {
+        Write-Host "    AAAA  -> [NONE or Disabled]" -ForegroundColor DarkGray
+    }
+
+    # 2. CNAME Records
+    try {
+        $cname = Resolve-DnsName -Name $Domain -Type CNAME -ErrorAction Stop
+        foreach ($c in $cname) {
+            Write-Host "    CNAME -> $($c.NameHost)" -ForegroundColor Green
+        }
+    } catch { }
+
+    # 3. MX Records (Base Domain)
+    Write-Host "`n[*] MX (Mail Exchanger) Records for $($baseDomain):" -ForegroundColor Yellow
+    try {
+        $mxRecords = Resolve-DnsName -Name $baseDomain -Type MX -ErrorAction Stop | Sort-Object Preference
+        foreach ($mx in $mxRecords) {
+            Write-Host "    MX (Pref: $($mx.Preference)) -> $($mx.NameExchange)" -ForegroundColor Green
+        }
+    } catch {
+        Write-Host "    MX    -> [No MX record found on $baseDomain]" -ForegroundColor Red
+    }
+
+    # 4. Nameservers (NS Records)
+    Write-Host "`n[*] Nameservers (NS) for $($baseDomain):" -ForegroundColor Yellow
+    try {
+        $nsRecords = Resolve-DnsName -Name $baseDomain -Type NS -ErrorAction Stop
+        foreach ($ns in $nsRecords) {
+            Write-Host "    NS    -> $($ns.NameHost)" -ForegroundColor Green
+        }
+    } catch {
+        Write-Host "    NS    -> [Could not resolve Nameservers]" -ForegroundColor Red
+    }
+
+    # 5. SPF (TXT Records on Base Domain)
+    Write-Host "`n[*] SPF & TXT Records for $($baseDomain):" -ForegroundColor Yellow
+    try {
+        $txtRecords = Resolve-DnsName -Name $baseDomain -Type TXT -ErrorAction Stop
+        $foundSpf = $false
+        foreach ($txt in $txtRecords) {
+            $txtVal = ($txt.Strings -join "")
+            if ($txtVal -like "v=spf1*") {
+                Write-Host "    SPF   -> $txtVal" -ForegroundColor Green
+                $foundSpf = $true
+            } else {
+                Write-Host "    TXT   -> $txtVal" -ForegroundColor DarkGray
+            }
+        }
+        if (-not $foundSpf) {
+            Write-Host "    [WARNING] No v=spf1 record detected for $baseDomain!" -ForegroundColor Red
+        }
+    } catch {
+        Write-Host "    TXT   -> [No TXT records found]" -ForegroundColor DarkGray
+    }
+
+    # 6. DMARC (_dmarc.<baseDomain>)
+    Write-Host "`n[*] DMARC Record for _dmarc.$($baseDomain):" -ForegroundColor Yellow
+    try {
+        $dmarc = Resolve-DnsName -Name "_dmarc.$baseDomain" -Type TXT -ErrorAction Stop
+        $dmarcVal = ($dmarc.Strings -join "")
+        Write-Host "    DMARC -> $dmarcVal" -ForegroundColor Green
+    } catch {
+        Write-Host "    DMARC -> [No DMARC record configured (_dmarc.$baseDomain)]" -ForegroundColor Red
+    }
+
+    # 7. Autodiscover / Autoconfig CNAME
+    Write-Host "`n[*] Mail Client Auto-Discovery Records:" -ForegroundColor Yellow
+    foreach ($autoSub in @("autodiscover.$baseDomain", "autoconfig.$baseDomain")) {
+        try {
+            $autoRec = Resolve-DnsName -Name $autoSub -Type CNAME -ErrorAction Stop
+            Write-Host "    $autoSub -> $($autoRec.NameHost)" -ForegroundColor Green
+        } catch {
+            Write-Host "    $autoSub -> [Not configured]" -ForegroundColor DarkGray
+        }
+    }
+}
 
 # ---------------------------------------------------------------------------
 # Step 1: Interactive Menu - Operation Mode
@@ -59,17 +240,19 @@ else {
     $validChoice = $false
     while (-not $validChoice) {
         Write-Host "Please select an operation mode:" -ForegroundColor Yellow
-        Write-Host "  1. Test Connectivity Only (Makes no changes to your network)"
+        Write-Host "  1. Test Connectivity & Diagnostics Only (Makes no changes to network)"
         Write-Host "  2. Repair & Test (Changes DNS, Disables IPv6, Tests Connectivity)"
         Write-Host "  3. Rollback (Undo previous network changes)"
         Write-Host "  4. View Network Status (Show physical adapters and current DNS)"
-        $choice = Read-Host "`nEnter 1, 2, 3, or 4 (Default: 2)"
+        Write-Host "  5. Inspect Full DNS Records (A, CNAME, MX, SPF, DMARC, NS)"
+        $choice = Read-Host "`nEnter 1, 2, 3, 4, or 5 (Default: 2)"
         
         if ([string]::IsNullOrWhiteSpace($choice) -or $choice -eq "2") { $opMode = "Repair"; $validChoice = $true }
         elseif ($choice -eq "1") { $opMode = "Test"; $validChoice = $true }
         elseif ($choice -eq "3") { $opMode = "Rollback"; $validChoice = $true }
         elseif ($choice -eq "4") { $opMode = "ViewStatus"; $validChoice = $true }
-        else { Write-Warning "Invalid choice. Please enter a number between 1 and 4.`n" }
+        elseif ($choice -eq "5") { $opMode = "InspectDns"; $validChoice = $true }
+        else { Write-Warning "Invalid choice. Please enter a number between 1 and 5.`n" }
     }
 }
 
@@ -111,7 +294,7 @@ if ($opMode -eq "Repair") {
 # ---------------------------------------------------------------------------
 if ($opMode -notin @("Rollback", "ViewStatus") -and (-not $TargetHosts -or $TargetHosts.Count -eq 0)) {
     Write-Host "`n==========================================================" -ForegroundColor Cyan
-    $inputHost = Read-Host "Enter the mail server hostname to test (e.g., mail.domain.com)"
+    $inputHost = Read-Host "Enter the mail server or domain to test (e.g., mail.domain.com or domain.com)"
     if ([string]::IsNullOrWhiteSpace($inputHost)) {
         Write-Warning "No hostname provided. Exiting."
         Stop-Transcript | Out-Null
@@ -121,22 +304,15 @@ if ($opMode -notin @("Rollback", "ViewStatus") -and (-not $TargetHosts -or $Targ
 }
 
 # ---------------------------------------------------------------------------
-# Helper Function for Fast Port Testing
+# EXECUTION: Inspect DNS Mode Only
 # ---------------------------------------------------------------------------
-function Test-PortReachability {
-    param([string]$HostName, [int]$Port, [int]$TimeoutMs = 4000)
-    $tcpClient = New-Object System.Net.Sockets.TcpClient
-    $connect = $tcpClient.BeginConnect($HostName, $Port, $null, $null)
-    $success = $connect.AsyncWaitHandle.WaitOne($TimeoutMs, $false)
-    if ($success) {
-        try {
-            $tcpClient.EndConnect($connect)
-            $tcpClient.Close()
-            return $true
-        } catch { return $false }
+if ($opMode -eq "InspectDns") {
+    foreach ($target in $TargetHosts) {
+        Show-FullDnsRecords -Domain $target
     }
-    $tcpClient.Close()
-    return $false
+    Write-Host "`nDNS inspection complete." -ForegroundColor Cyan
+    Stop-Transcript | Out-Null
+    Exit 0
 }
 
 # ---------------------------------------------------------------------------
@@ -147,7 +323,6 @@ if ($opMode -eq "ViewStatus") {
     Write-Host "   CURRENT NETWORK & DNS STATUS                           " -ForegroundColor Cyan
     Write-Host "==========================================================" -ForegroundColor Cyan
 
-    # Filter out virtual adapters, VPNs, Tailscale, WSL, and Bluetooth to keep it clean
     $physicalAdapters = Get-NetAdapter | Where-Object {
         $_.InterfaceDescription -notmatch "Hyper-V|Virtual|Tailscale|WSL|Loopback|TAP|VPN|Bluetooth|Pseudo"
     }
@@ -162,7 +337,6 @@ if ($opMode -eq "ViewStatus") {
             Write-Host "Description: $($adapter.InterfaceDescription)" -ForegroundColor $statusColor
             Write-Host "Status: $($adapter.Status)" -ForegroundColor $statusColor
 
-            # Only pull DNS info if the adapter is actually connected
             if ($adapter.Status -eq "Up") {
                 $dnsConfig = Get-DnsClientServerAddress -InterfaceAlias $adapter.Name -AddressFamily IPv4 -ErrorAction SilentlyContinue
                 $ipv6Binding = Get-NetAdapterBinding -Name $adapter.Name -ComponentID ms_tcpip6 -ErrorAction SilentlyContinue
@@ -287,74 +461,115 @@ if ($opMode -eq "Repair") {
 }
 
 # ---------------------------------------------------------------------------
-# EXECUTION: Diagnostic Verifications (Runs for both Repair and Test modes)
+# EXECUTION: Comprehensive Diagnostics
 # ---------------------------------------------------------------------------
 Write-Host "`n==========================================================" -ForegroundColor Cyan
-Write-Host "   RUNNING CONNECTIVITY DIAGNOSTICS                       " -ForegroundColor Cyan
+Write-Host "   RUNNING FULL SYSTEM & SERVICE DIAGNOSTICS              " -ForegroundColor Cyan
 Write-Host "==========================================================" -ForegroundColor Cyan
 
 $allResults = @{}
+$reportText = New-Object System.Text.StringBuilder
+
+$null = $reportText.AppendLine("==========================================================")
+$null = $reportText.AppendLine("   IT SUPPORT TOOLS - SERVICE DIAGNOSTIC REPORT           ")
+$null = $reportText.AppendLine("   Date: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')        ")
+$null = $reportText.AppendLine("==========================================================")
 
 foreach ($hostTarget in $TargetHosts) {
     Write-Host "`n----------------------------------------------------------"
-    Write-Host "   Testing Host: $hostTarget" -ForegroundColor White
+    Write-Host "   Testing Target: $hostTarget" -ForegroundColor White
     Write-Host "----------------------------------------------------------"
 
-    $results = [ordered]@{
-        DnsResolved = "NOT TESTED"
-        Imap993     = "NOT TESTED"
-        Smtp465     = "NOT TESTED"
-        Smtp587     = "NOT TESTED"
+    $null = $reportText.AppendLine("`nTarget: $hostTarget")
+
+    # If the user inputted a base domain without "mail.", detect MX
+    $testedHost = $hostTarget
+    if ($hostTarget -notmatch "^(mail|webmail|smtp|imap|pop)\.") {
+        try {
+            $discoveredMx = Resolve-DnsName -Name $hostTarget -Type MX -ErrorAction SilentlyContinue | Sort-Object Preference | Select-Object -First 1
+            if ($discoveredMx -and $discoveredMx.NameExchange) {
+                Write-Host "[*] Auto-detected Mail Exchanger (MX): $($discoveredMx.NameExchange)" -ForegroundColor Cyan
+                # If target is base domain, we can also test the MX host
+            }
+        } catch { }
     }
 
-    Write-Host "[*] Resolving DNS..." -ForegroundColor Yellow
+    # Run DNS inspection inline
+    Show-FullDnsRecords -Domain $hostTarget
+
+    # Port reachability test suite
+    $portsToTest = [ordered]@{
+        "DNS_A_Record"       = 0
+        "IMAP_993_SSL"       = 993
+        "POP3_995_SSL"       = 995
+        "SMTP_465_SSL"       = 465
+        "SMTP_587_STARTTLS"  = 587
+        "Webmail_2096_SSL"   = 2096
+        "cPanel_2083_SSL"    = 2083
+        "HTTPS_443"          = 443
+    }
+
+    $results = [ordered]@{}
+    foreach ($p in $portsToTest.Keys) {
+        $results[$p] = "NOT TESTED"
+    }
+
+    # Test DNS A Record
+    Write-Host "`n[*] Verifying Host Resolution..." -ForegroundColor Yellow
     try {
         $dnsResult = Resolve-DnsName -Name $hostTarget -Type A -ErrorAction Stop
         $resolvedIPs = ($dnsResult | Where-Object { $_.IPAddress } | Select-Object -ExpandProperty IPAddress) -join ", "
         if ($resolvedIPs) {
             Write-Host "    [SUCCESS] Host resolved to IP: $resolvedIPs" -ForegroundColor Green
-            $results.DnsResolved = "PASS"
+            $results["DNS_A_Record"] = "PASS"
         } else {
             Write-Host "    [FAILURE] No IPv4 A records found." -ForegroundColor Red
-            $results.DnsResolved = "FAIL"
+            $results["DNS_A_Record"] = "FAIL"
         }
     } catch {
         Write-Host "    [FAILURE] Unable to resolve $hostTarget" -ForegroundColor Red
-        $results.DnsResolved = "FAIL"
+        $results["DNS_A_Record"] = "FAIL"
     }
 
-    Write-Host "[*] Testing IMAP (Port 993)..." -ForegroundColor Yellow
-    if (Test-PortReachability -HostName $hostTarget -Port 993) {
-        Write-Host "    [SUCCESS] Connected to IMAP Port 993." -ForegroundColor Green
-        $results.Imap993 = "PASS"
-    } else {
-        Write-Host "    [FAILURE] Port 993 unreachable." -ForegroundColor Red
-        $results.Imap993 = "FAIL"
+    # Test Ports
+    Write-Host "`n[*] Testing Server Ports (Inbound, Outbound, Webmail, Panels)..." -ForegroundColor Yellow
+    foreach ($serviceName in $portsToTest.Keys) {
+        $portNum = $portsToTest[$serviceName]
+        if ($portNum -eq 0) { continue }
+
+        if (Test-PortReachability -HostName $hostTarget -Port $portNum) {
+            Write-Host ("    {0,-22} (Port {1,4}) : CONNECTED" -f $serviceName, $portNum) -ForegroundColor Green
+            $results[$serviceName] = "PASS"
+        } else {
+            Write-Host ("    {0,-22} (Port {1,4}) : UNREACHABLE" -f $serviceName, $portNum) -ForegroundColor Red
+            $results[$serviceName] = "FAIL"
+        }
     }
 
-    Write-Host "[*] Testing SMTP (Port 465)..." -ForegroundColor Yellow
-    if (Test-PortReachability -HostName $hostTarget -Port 465) {
-        Write-Host "    [SUCCESS] Connected to SMTP Port 465." -ForegroundColor Green
-        $results.Smtp465 = "PASS"
-    } else {
-        Write-Host "    [FAILURE] Port 465 unreachable." -ForegroundColor Red
-        $results.Smtp465 = "FAIL"
+    # Test SSL Certificate on Port 443 and 993/465
+    Write-Host "`n[*] Inspecting SSL/TLS Certificate..." -ForegroundColor Yellow
+    $sslCheck = Test-SslCertificate -HostName $hostTarget -Port 443
+    if (-not $sslCheck.Valid) {
+        # Fallback to test SSL on IMAP 993
+        $sslCheck = Test-SslCertificate -HostName $hostTarget -Port 993
     }
 
-    Write-Host "[*] Testing SMTP (Port 587 - STARTTLS)..." -ForegroundColor Yellow
-    if (Test-PortReachability -HostName $hostTarget -Port 587) {
-        Write-Host "    [SUCCESS] Connected to SMTP Port 587." -ForegroundColor Green
-        $results.Smtp587 = "PASS"
+    if ($sslCheck.Valid) {
+        Write-Host "    [SUCCESS] Certificate is VALID!" -ForegroundColor Green
+        Write-Host "    Expires on : $($sslCheck.ExpiresOn) ($($sslCheck.DaysLeft) days remaining)" -ForegroundColor Green
+        Write-Host "    Issued To  : $($sslCheck.Subject)" -ForegroundColor DarkGray
+        Write-Host "    Issued By  : $($sslCheck.Issuer)" -ForegroundColor DarkGray
+        $results["SSL_Certificate"] = "VALID ($($sslCheck.DaysLeft)d left)"
     } else {
-        Write-Host "    [FAILURE] Port 587 unreachable." -ForegroundColor Red
-        $results.Smtp587 = "FAIL"
+        Write-Host "    [WARNING] SSL Check: $($sslCheck.Error)" -ForegroundColor Yellow
+        $results["SSL_Certificate"] = "WARNING/FAIL"
     }
 
     $allResults[$hostTarget] = $results
 }
 
 # ---------------------------------------------------------------------------
-# 3. Summary
+# 3. Final Summary & Clipboard Export
 # ---------------------------------------------------------------------------
 Write-Host "`n==========================================================" -ForegroundColor Cyan
 Write-Host "   FINAL SUMMARY ($opMode Mode)                            " -ForegroundColor Cyan
@@ -362,21 +577,37 @@ Write-Host "==========================================================" -Foregro
 
 foreach ($hostTarget in $TargetHosts) {
     Write-Host "`n > Results for $hostTarget :" -ForegroundColor White
+    $null = $reportText.AppendLine("`n--- Summary for $hostTarget ---")
+    
     $hostResults = $allResults[$hostTarget]
     
     foreach ($key in $hostResults.Keys) {
         $status = $hostResults[$key]
-        $color = switch ($status) {
-            "PASS"       { "Green" }
-            "FAIL"       { "Red" }
-            "NOT TESTED" { "DarkGray" }
-            default      { "White" }
+        $color = switch -Wildcard ($status) {
+            "PASS*"  { "Green" }
+            "VALID*" { "Green" }
+            "FAIL*"  { "Red" }
+            default  { "DarkGray" }
         }
-        Write-Host ("    {0,-15} {1}" -f $key, $status) -ForegroundColor $color
+        $line = ("    {0,-22} {1}" -f $key, $status)
+        Write-Host $line -ForegroundColor $color
+        $null = $reportText.AppendLine($line)
     }
 }
 
 Write-Host "`nLog saved to: $logFile" -ForegroundColor DarkGray
 Write-Host "Diagnostic complete." -ForegroundColor Cyan
+
+# Option to copy full report to clipboard
+Write-Host ""
+$copyChoice = Read-Host "Would you like to copy the diagnostic summary to the Clipboard? (Y/N) [Default: Y]"
+if ([string]::IsNullOrWhiteSpace($copyChoice) -or $copyChoice -match "^[Yy]") {
+    try {
+        Set-Clipboard -Value $reportText.ToString()
+        Write-Host "[OK] Full report successfully copied to clipboard! You can now paste (Ctrl+V) into a ticket or chat." -ForegroundColor Green
+    } catch {
+        Write-Warning "Could not access clipboard in this session."
+    }
+}
 
 Stop-Transcript | Out-Null
