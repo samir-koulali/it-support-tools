@@ -298,6 +298,7 @@ if ($opMode -notin @("Rollback", "ViewStatus") -and (-not $TargetHosts -or $Targ
     if ([string]::IsNullOrWhiteSpace($inputHost)) {
         Write-Warning "No hostname provided. Exiting."
         Stop-Transcript | Out-Null
+        Read-Host "`nPress Enter to exit..."
         Exit 1
     }
     $TargetHosts = $inputHost -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne "" }
@@ -312,6 +313,7 @@ if ($opMode -eq "InspectDns") {
     }
     Write-Host "`nDNS inspection complete." -ForegroundColor Cyan
     Stop-Transcript | Out-Null
+    Read-Host "`nPress Enter to exit..."
     Exit 0
 }
 
@@ -352,6 +354,7 @@ if ($opMode -eq "ViewStatus") {
     
     Write-Host "`nStatus check complete." -ForegroundColor Cyan
     Stop-Transcript | Out-Null
+    Read-Host "`nPress Enter to exit..."
     Exit 0
 }
 
@@ -408,6 +411,7 @@ if ($opMode -eq "Rollback") {
     Clear-DnsClientCache
     Write-Host "`nRollback complete." -ForegroundColor Cyan
     Stop-Transcript | Out-Null
+    Read-Host "`nPress Enter to exit..."
     Exit 0
 }
 
@@ -636,3 +640,4 @@ if ([string]::IsNullOrWhiteSpace($copyChoice) -or $copyChoice -match "^[Yy]") {
 }
 
 Stop-Transcript | Out-Null
+Read-Host "`nPress Enter to exit..."
