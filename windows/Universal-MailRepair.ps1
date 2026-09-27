@@ -230,6 +230,16 @@ function Show-FullDnsRecords {
     }
 }
 
+$isInteractive = (-not $TestOnly -and -not $Rollback)
+
+while ($true) {
+    if ($isInteractive) { 
+        $TargetHosts = @() 
+        Write-Host "`n==========================================================" -ForegroundColor Cyan
+        Write-Host "   UNIVERSAL MAIL & SERVER DIAGNOSTIC & REPAIR TOOL       " -ForegroundColor Cyan
+        Write-Host "==========================================================" -ForegroundColor Cyan
+    }
+
 # ---------------------------------------------------------------------------
 # Step 1: Interactive Menu - Operation Mode
 # ---------------------------------------------------------------------------
@@ -245,14 +255,16 @@ else {
         Write-Host "  3. Rollback (Undo previous network changes)"
         Write-Host "  4. View Network Status (Show physical adapters and current DNS)"
         Write-Host "  5. Inspect Full DNS Records (A, CNAME, MX, SPF, DMARC, NS)"
-        $choice = Read-Host "`nEnter 1, 2, 3, 4, or 5 (Default: 2)"
+        Write-Host "  0. Exit Tool" -ForegroundColor Red
+        $choice = Read-Host "`nEnter 1, 2, 3, 4, 5, or 0 (Default: 2)"
         
         if ([string]::IsNullOrWhiteSpace($choice) -or $choice -eq "2") { $opMode = "Repair"; $validChoice = $true }
         elseif ($choice -eq "1") { $opMode = "Test"; $validChoice = $true }
         elseif ($choice -eq "3") { $opMode = "Rollback"; $validChoice = $true }
         elseif ($choice -eq "4") { $opMode = "ViewStatus"; $validChoice = $true }
         elseif ($choice -eq "5") { $opMode = "InspectDns"; $validChoice = $true }
-        else { Write-Warning "Invalid choice. Please enter a number between 1 and 5.`n" }
+        elseif ($choice -eq "0") { Stop-Transcript -ErrorAction SilentlyContinue | Out-Null; Exit 0 }
+        else { Write-Warning "Invalid choice. Please enter a number between 0 and 5.`n" }
     }
 }
 
@@ -296,10 +308,15 @@ if ($opMode -notin @("Rollback", "ViewStatus") -and (-not $TargetHosts -or $Targ
     Write-Host "`n==========================================================" -ForegroundColor Cyan
     $inputHost = Read-Host "Enter the mail server or domain to test (e.g., mail.domain.com or domain.com)"
     if ([string]::IsNullOrWhiteSpace($inputHost)) {
-        Write-Warning "No hostname provided. Exiting."
-        Stop-Transcript | Out-Null
-        Read-Host "`nPress Enter to exit..."
-        Exit 1
+        Write-Warning "No hostname provided."
+        Stop-Transcript -ErrorAction SilentlyContinue | Out-Null
+        if ($isInteractive) {
+            Write-Host "`nReturning to Main Menu in 2 seconds..."
+            Start-Sleep -Seconds 2
+            continue
+        } else {
+            Exit 1
+        }
     }
     $TargetHosts = $inputHost -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne "" }
 }
@@ -312,9 +329,14 @@ if ($opMode -eq "InspectDns") {
         Show-FullDnsRecords -Domain $target
     }
     Write-Host "`nDNS inspection complete." -ForegroundColor Cyan
-    Stop-Transcript | Out-Null
-    Read-Host "`nPress Enter to exit..."
-    Exit 0
+    Stop-Transcript -ErrorAction SilentlyContinue | Out-Null
+    if ($isInteractive) {
+        $navChoice = Read-Host "`nPress 1 to return to Main Menu, or 0 to Exit [Default: 1]"
+        if ($navChoice -eq "0") { Exit 0 }
+        continue
+    } else {
+        Exit 0
+    }
 }
 
 # ---------------------------------------------------------------------------
@@ -353,9 +375,14 @@ if ($opMode -eq "ViewStatus") {
     }
     
     Write-Host "`nStatus check complete." -ForegroundColor Cyan
-    Stop-Transcript | Out-Null
-    Read-Host "`nPress Enter to exit..."
-    Exit 0
+    Stop-Transcript -ErrorAction SilentlyContinue | Out-Null
+    if ($isInteractive) {
+        $navChoice = Read-Host "`nPress 1 to return to Main Menu, or 0 to Exit [Default: 1]"
+        if ($navChoice -eq "0") { Exit 0 }
+        continue
+    } else {
+        Exit 0
+    }
 }
 
 # ---------------------------------------------------------------------------
@@ -365,8 +392,14 @@ if ($opMode -eq "Rollback") {
     Write-Host "`n==========================================================" -ForegroundColor Cyan
     if (-not (Test-Path $backupFile)) {
         Write-Error "No backup file found at $backupFile. Nothing to roll back."
-        Stop-Transcript | Out-Null
-        Exit 1
+        Stop-Transcript -ErrorAction SilentlyContinue | Out-Null
+        if ($isInteractive) {
+            Write-Host "`nReturning to Main Menu in 3 seconds..."
+            Start-Sleep -Seconds 3
+            continue
+        } else {
+            Exit 1
+        }
     }
 
     Write-Host "[+] Rolling back DNS/IPv6 settings from backup..." -ForegroundColor Yellow
@@ -410,9 +443,14 @@ if ($opMode -eq "Rollback") {
 
     Clear-DnsClientCache
     Write-Host "`nRollback complete." -ForegroundColor Cyan
-    Stop-Transcript | Out-Null
-    Read-Host "`nPress Enter to exit..."
-    Exit 0
+    Stop-Transcript -ErrorAction SilentlyContinue | Out-Null
+    if ($isInteractive) {
+        $navChoice = Read-Host "`nPress 1 to return to Main Menu, or 0 to Exit [Default: 1]"
+        if ($navChoice -eq "0") { Exit 0 }
+        continue
+    } else {
+        Exit 0
+    }
 }
 
 # ---------------------------------------------------------------------------
@@ -430,8 +468,14 @@ if ($opMode -eq "Repair") {
 
     if (-not $activeAdapters) {
         Write-Warning "No active physical network adapter detected."
-        Stop-Transcript | Out-Null
-        Exit 1
+        Stop-Transcript -ErrorAction SilentlyContinue | Out-Null
+        if ($isInteractive) {
+            Write-Host "`nReturning to Main Menu in 3 seconds..."
+            Start-Sleep -Seconds 3
+            continue
+        } else {
+            Exit 1
+        }
     }
 
     $backupEntries = @()
@@ -639,5 +683,12 @@ if ([string]::IsNullOrWhiteSpace($copyChoice) -or $copyChoice -match "^[Yy]") {
     }
 }
 
-Stop-Transcript | Out-Null
-Read-Host "`nPress Enter to exit..."
+Stop-Transcript -ErrorAction SilentlyContinue | Out-Null
+if ($isInteractive) {
+    $navChoice = Read-Host "`nPress 1 to return to Main Menu, or 0 to Exit [Default: 1]"
+    if ($navChoice -eq "0") { Exit 0 }
+    continue
+} else {
+    Exit 0
+}
+}
