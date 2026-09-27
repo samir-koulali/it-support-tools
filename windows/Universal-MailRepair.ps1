@@ -430,7 +430,7 @@ if ($opMode -eq "Rollback") {
                 Write-Host "    [OK] Restored DHCP-assigned DNS on '$alias'." -ForegroundColor Green
             } elseif ($entry.OriginalDns) {
                 Set-DnsClientServerAddress -InterfaceAlias $alias -ServerAddresses $entry.OriginalDns -ErrorAction Stop
-                Write-Host "    [OK] Restored original static DNS ($($entry.OriginalDns -join ', ')) on '$alias'." -ForegroundColor Green
+                $dnsStr = $entry.OriginalDns -join ', '; Write-Host "    [OK] Restored original static DNS ($dnsStr) on '$alias'." -ForegroundColor Green
             }
         } catch {
             Write-Warning "    [!] Failed to roll back adapter '$alias' : $_"
@@ -504,7 +504,7 @@ if ($opMode -eq "Repair") {
         # Apply chosen DNS
         try {
             Set-DnsClientServerAddress -InterfaceAlias $alias -ServerAddresses $selectedDns.IPs -ErrorAction Stop
-            Write-Host "    [OK] $($selectedDns.Name) DNS ($($selectedDns.IPs -join ' / ')) configured." -ForegroundColor Green
+            $dnsStr = $selectedDns.IPs -join ' / '; Write-Host "    [OK] $($selectedDns.Name) DNS ($dnsStr) configured." -ForegroundColor Green
         } catch {
             Write-Warning "    [!] Error assigning IPv4 DNS: $_"
         }
@@ -537,7 +537,7 @@ $reportText = New-Object System.Text.StringBuilder
 
 $null = $reportText.AppendLine("==========================================================")
 $null = $reportText.AppendLine("   IT SUPPORT TOOLS - SERVICE DIAGNOSTIC REPORT           ")
-$null = $reportText.AppendLine("   Date: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')        ")
+$dateStr = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'; $null = $reportText.AppendLine("   Date: $dateStr        ")
 $null = $reportText.AppendLine("==========================================================")
 
 foreach ($hostTarget in $TargetHosts) {
@@ -586,7 +586,7 @@ foreach ($hostTarget in $TargetHosts) {
         $dnsResult = Resolve-DnsName -Name $hostTarget -Type A -ErrorAction Stop
         $resolvedIPs = @($dnsResult | Where-Object { $_.IPAddress } | Select-Object -ExpandProperty IPAddress)
         if ($resolvedIPs.Count -gt 0) {
-            Write-Host "    [SUCCESS] Host resolved to IP: $($resolvedIPs -join ', ')" -ForegroundColor Green
+            $ipStr = $resolvedIPs -join ', '; Write-Host "    [SUCCESS] Host resolved to IP: $ipStr" -ForegroundColor Green
             $results["DNS_A_Record"] = "PASS"
             $targetIpForSockets = $resolvedIPs[0]
         } else {
@@ -685,5 +685,6 @@ if ($isInteractive) {
     try { Stop-Transcript | Out-Null } catch {}; Exit 0
 }
 }
+
 
 
