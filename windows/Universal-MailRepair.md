@@ -1,4 +1,4 @@
-# Windows Mail Connection & Server Diagnostic Tool
+﻿# Windows Mail Connection & Server Diagnostic Tool
 
 **Script:** `Universal-MailRepair.ps1`
 
@@ -26,7 +26,7 @@ You don't need to manually download the script to use it. You can run it directl
 3. Copy and paste the following command, then press Enter:
 
 ```powershell
-irm "https://raw.githubusercontent.com/samir-koulali/it-support-tools/master/windows/Universal-MailRepair.ps1" | iex
+irm "https://raw.githubusercontent.com/samir-koulali/it-support-tools/master/windows/Universal-MailRepair.ps1" -OutFile "$env:TEMP\MailRepair.ps1"; & "$env:TEMP\MailRepair.ps1"
 ```
 
 4. Follow the on-screen interactive menu!
@@ -36,5 +36,6 @@ If you want to run the script in a specific mode without using the interactive m
 
 ```powershell
 # Example: Triggering a rollback directly
-& ([scriptblock]::Create((irm "https://raw.githubusercontent.com/samir-koulali/it-support-tools/master/windows/Universal-MailRepair.ps1"))) -Rollback
+irm "https://raw.githubusercontent.com/samir-koulali/it-support-tools/master/windows/Universal-MailRepair.ps1" -OutFile "$env:TEMP\MailRepair.ps1"; & "$env:TEMP\MailRepair.ps1" -Rollback
 ```
+
