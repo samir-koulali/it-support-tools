@@ -429,65 +429,76 @@ function Get-ThunderbirdProfiles {
                 if ($prefsExists) {
                     $prefsLines = Get-Content $prefsPath -ErrorAction SilentlyContinue
                     
-                    # Extract incoming servers
-                    $srvHash = @{}
+                    $accMap = @{}
+                    $srvMap = @{}
+                    $idMap  = @{}
+                    $smtpMap = @{}
+
                     foreach ($pl in $prefsLines) {
-                        if ($pl -match 'user_pref\("mail\.server\.(server\d+)\.(hostname|port|type|userName|socketType)",\s*"?([^"\)]*)"?\);') {
-                            $sId   = $matches[1]
-                            $sProp = $matches[2]
-                            $sVal  = $matches[3]
-                            if (-not $srvHash.ContainsKey($sId)) { $srvHash[$sId] = @{} }
-                            $srvHash[$sId][$sProp] = $sVal
+                        if ($pl -match 'user_pref\("mail\.account\.(account\d+)\.(server|identities)",\s*"([^"]+)"\);') {
+                            $aId = $matches[1]; $prop = $matches[2]; $val = $matches[3]
+                            if (-not $accMap.ContainsKey($aId)) { $accMap[$aId] = @{} }
+                            $accMap[$aId][$prop] = $val
+                        }
+                        elseif ($pl -match 'user_pref\("mail\.server\.(server\d+)\.(hostname|port|type|userName|socketType)",\s*"?([^"\)]*)"?\);') {
+                            $sId = $matches[1]; $prop = $matches[2]; $val = $matches[3]
+                            if (-not $srvMap.ContainsKey($sId)) { $srvMap[$sId] = @{} }
+                            $srvMap[$sId][$prop] = $val
+                        }
+                        elseif ($pl -match 'user_pref\("mail\.identity\.(id\d+)\.(useremail|fullName|smtpServer)",\s*"([^"]+)"\);') {
+                            $iId = $matches[1]; $prop = $matches[2]; $val = $matches[3]
+                            if (-not $idMap.ContainsKey($iId)) { $idMap[$iId] = @{} }
+                            $idMap[$iId][$prop] = $val
+                        }
+                        elseif ($pl -match 'user_pref\("mail\.smtpserver\.(smtp\d+)\.(hostname|port|username|try_ssl)",\s*"?([^"\)]*)"?\);') {
+                            $mId = $matches[1]; $prop = $matches[2]; $val = $matches[3]
+                            if (-not $smtpMap.ContainsKey($mId)) { $smtpMap[$mId] = @{} }
+                            $smtpMap[$mId][$prop] = $val
                         }
                     }
 
-                    foreach ($sId in $srvHash.Keys) {
-                        $s = $srvHash[$sId]
-                        if ($s['hostname'] -and $s['hostname'] -ne "Local Folders") {
-                            $servers += [PSCustomObject]@{
-                                ServerId   = $sId
-                                Type       = $s['type']
-                                Hostname   = $s['hostname']
-                                Port       = if ($s['port']) { [int]$s['port'] } else { if ($s['type'] -eq 'pop3') { 995 } else { 993 } }
-                                SocketType = switch ($s['socketType']) { "3" { "SSL/TLS" } "2" { "STARTTLS" } Default { "Plain/None" } }
-                                UserName   = $s['userName']
+                    # Assemble clean account definitions
+                    $cleanAccounts = @()
+                    foreach ($aId in $accMap.Keys) {
+                        $sId = $accMap[$aId]['server']
+                        $iId = ($accMap[$aId]['identities'] -split ',')[0]
+                        
+                        $email = if ($idMap.ContainsKey($iId)) { $idMap[$iId]['useremail'] } else { $null }
+                        $smtpId = if ($idMap.ContainsKey($iId)) { $idMap[$iId]['smtpServer'] } else { $null }
+
+                        $inHost = if ($srvMap.ContainsKey($sId)) { $srvMap[$sId]['hostname'] } else { $null }
+                        $inType = if ($srvMap.ContainsKey($sId)) { $srvMap[$sId]['type'] } else { "imap" }
+                        $inPort = if ($srvMap.ContainsKey($sId) -and $srvMap[$sId]['port']) { [int]$srvMap[$sId]['port'] } else { if ($inType -eq 'pop3') { 995 } else { 993 } }
+                        $inSec  = if ($srvMap.ContainsKey($sId)) { switch ($srvMap[$sId]['socketType']) { "3" { "SSL/TLS" } "2" { "STARTTLS" } Default { "None" } } } else { "SSL/TLS" }
+
+                        $outHost = if ($smtpId -and $smtpMap.ContainsKey($smtpId)) { $smtpMap[$smtpId]['hostname'] } else { $null }
+                        $outPort = if ($smtpId -and $smtpMap.ContainsKey($smtpId) -and $smtpMap[$smtpId]['port']) { [int]$smtpMap[$smtpId]['port'] } else { 465 }
+                        $outSec  = if ($smtpId -and $smtpMap.ContainsKey($smtpId)) { switch ($smtpMap[$smtpId]['try_ssl']) { "3" { "SSL/TLS" } "2" { "STARTTLS" } Default { "None" } } } else { "SSL/TLS" }
+
+                        if ($email -and $inHost -and $inHost -ne "Local Folders" -and $inHost -notmatch '^(localhost|127\.0\.0\.1)$') {
+                            $cleanAccounts += [PSCustomObject]@{
+                                Email            = $email
+                                FullName         = if ($idMap.ContainsKey($iId)) { $idMap[$iId]['fullName'] } else { "" }
+                                IncomingHost     = $inHost
+                                IncomingPort     = $inPort
+                                IncomingType     = $inType.ToUpper()
+                                IncomingSecurity = $inSec
+                                OutgoingHost     = $outHost
+                                OutgoingPort     = $outPort
+                                OutgoingSecurity = $outSec
+                            }
+
+                            if (-not ($servers | Where-Object { $_.Hostname -eq $inHost -and $_.Port -eq $inPort })) {
+                                $servers += [PSCustomObject]@{ Hostname = $inHost; Port = $inPort; Type = $inType.ToUpper(); SocketType = $inSec }
+                            }
+                            if ($outHost -and $outHost -notmatch '^(localhost|127\.0\.0\.1)$' -and -not ($servers | Where-Object { $_.Hostname -eq $outHost -and $_.Port -eq $outPort })) {
+                                $servers += [PSCustomObject]@{ Hostname = $outHost; Port = $outPort; Type = "SMTP"; SocketType = $outSec }
                             }
                         }
                     }
 
-                    # Extract outgoing SMTP servers
-                    $smtpHash = @{}
-                    foreach ($pl in $prefsLines) {
-                        if ($pl -match 'user_pref\("mail\.smtpserver\.(smtp\d+)\.(hostname|port|username|try_ssl)",\s*"?([^"\)]*)"?\);') {
-                            $mId   = $matches[1]
-                            $mProp = $matches[2]
-                            $mVal  = $matches[3]
-                            if (-not $smtpHash.ContainsKey($mId)) { $smtpHash[$mId] = @{} }
-                            $smtpHash[$mId][$mProp] = $mVal
-                        }
-                    }
-
-                    foreach ($mId in $smtpHash.Keys) {
-                        $m = $smtpHash[$mId]
-                        if ($m['hostname']) {
-                            $servers += [PSCustomObject]@{
-                                ServerId   = $mId
-                                Type       = "smtp"
-                                Hostname   = $m['hostname']
-                                Port       = if ($m['port']) { [int]$m['port'] } else { 465 }
-                                SocketType = switch ($m['try_ssl']) { "3" { "SSL/TLS" } "2" { "STARTTLS" } Default { "Plain/None" } }
-                                UserName   = $m['username']
-                            }
-                        }
-                    }
-
-                    # Extract identities
-                    foreach ($pl in $prefsLines) {
-                        if ($pl -match 'user_pref\("mail\.identity\.(id\d+)\.useremail",\s*"([^"]+)"\);') {
-                            $identities += $matches[2]
-                        }
-                    }
-                    $identities = $identities | Select-Object -Unique
+                    $accounts = $cleanAccounts
+                    $identities = $cleanAccounts | ForEach-Object { $_.Email }
                 }
             }
 
@@ -501,6 +512,7 @@ function Get-ThunderbirdProfiles {
                 HasLock       = $hasLock
                 HasPrefs      = $prefsExists
                 Servers       = $servers
+                Accounts      = $accounts
                 Identities    = $identities
                 IsOrphaned    = $false
             }
@@ -530,6 +542,7 @@ function Get-ThunderbirdProfiles {
                     HasLock       = (Test-Path (Join-Path $df.FullName "parent.lock"))
                     HasPrefs      = (Test-Path (Join-Path $df.FullName "prefs.js"))
                     Servers       = @()
+                    Accounts      = @()
                     Identities    = @()
                     IsOrphaned    = $true
                 }
@@ -546,131 +559,170 @@ function Get-ThunderbirdProfiles {
 function Invoke-ProfileTestReport {
     param([switch]$OmitNetwork)
 
-    $reportLines = @()
-    $reportLines += "=========================================================="
-    $reportLines += "       MAIL CLIENT PROFILE DIAGNOSTIC REPORT              "
-    $reportLines += "       Generated: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')"
-    $reportLines += "=========================================================="
-    $reportLines += ""
-
-    Write-Host "Scanning system for mail client profiles..." -ForegroundColor Cyan
-
     $outlookExe = Get-OutlookExecutable
-    $tbExe = Get-ThunderbirdExecutable
-
-    $reportLines += "1. INSTALLED CLIENT DETECTION:"
-    $reportLines += "  - Microsoft Outlook:    $(if ($outlookExe) { "Installed ($outlookExe)" } else { "Not Found" })"
-    $reportLines += "  - Mozilla Thunderbird:  $(if ($tbExe) { "Installed ($tbExe)" } else { "Not Found" })"
-    $reportLines += ""
-
-    # Running processes check
+    $tbExe      = Get-ThunderbirdExecutable
     $outlookProc = Get-Process -Name "OUTLOOK" -ErrorAction SilentlyContinue
-    $tbProc = Get-Process -Name "thunderbird" -ErrorAction SilentlyContinue
-    $reportLines += "2. PROCESS STATUS:"
-    $reportLines += "  - OUTLOOK.EXE:    $(if ($outlookProc) { "Running (PID: $($outlookProc.Id -join ','))" } else { "Idle / Not Running" })"
-    $reportLines += "  - thunderbird.exe: $(if ($tbProc) { "Running (PID: $($tbProc.Id -join ','))" } else { "Idle / Not Running" })"
-    $reportLines += ""
+    $tbProc      = Get-Process -Name "thunderbird" -ErrorAction SilentlyContinue
 
-    # Outlook Profiles
     $outlookProfiles = Get-OutlookProfiles
-    $reportLines += "3. MICROSOFT OUTLOOK PROFILES ($($outlookProfiles.Count) Detected):"
-    if ($outlookProfiles.Count -eq 0) {
-        $reportLines += "  [INFO] No Outlook registry profiles detected."
-    } else {
-        foreach ($op in $outlookProfiles) {
-            $defMarker = if ($op.IsDefault) { "[DEFAULT]" } else { "         " }
-            $reportLines += "  $defMarker Profile Name: '$($op.ProfileName)' (Office $($op.OfficeVersion))"
-            $reportLines += "             Registry: $($op.RegistryPath)"
-            if ($op.Emails.Count -gt 0) {
-                $reportLines += "             Emails: $($op.Emails -join ', ')"
+    $tbProfiles      = Get-ThunderbirdProfiles
+
+    # Collect all unique remote servers across configured profiles
+    $serversToTest = @()
+    foreach ($tp in $tbProfiles) {
+        foreach ($s in $tp.Servers) {
+            if ($s.Hostname -and $s.Hostname -notmatch '^(localhost|127\.0\.0\.1)$') {
+                $key = "$($s.Hostname):$($s.Port)"
+                if (-not ($serversToTest | Where-Object { "$($_.Hostname):$($_.Port)" -eq $key })) {
+                    $serversToTest += $s
+                }
             }
-            if ($op.DataFiles.Count -gt 0) {
-                foreach ($df in $op.DataFiles) {
-                    $warn = if ($df.SizeMB -gt 45000) { " [WARN: EXCEEDS 45GB LIMIT!]" } else { "" }
-                    $status = if ($df.Exists) { "$($df.SizeMB) MB$warn" } else { "[MISSING ON DISK]" }
-                    $reportLines += "             Data File: $($df.Path) ($status)"
+        }
+    }
+
+    $networkResults = @()
+    if (-not $OmitNetwork -and $serversToTest.Count -gt 0) {
+        $curr = 0
+        $total = $serversToTest.Count
+        foreach ($s in $serversToTest) {
+            $curr++
+            Write-Progress -Activity "Testing Mail Server Reachability & SSL" `
+                -Status ("[{0}/{1}] Checking {2}:{3} ({4})" -f $curr, $total, $s.Hostname, $s.Port, $s.Type) `
+                -PercentComplete ([int](($curr / $total) * 100))
+
+            $isReachable = Test-FastPortReachability -HostName $s.Hostname -Port $s.Port
+            $certInfo = "-"
+            $certStatus = "OK"
+
+            if ($isReachable) {
+                if ($s.Port -in @(993, 995, 465, 587, 443)) {
+                    $cert = Test-MailSslCertificate -HostName $s.Hostname -Port $s.Port
+                    if ($cert.Valid) {
+                        $certInfo = "Valid ($($cert.DaysLeft) days left, $($cert.ExpiresOn))"
+                    } else {
+                        $certInfo = "CERT ERROR: $($cert.Error)"
+                        $certStatus = "ERROR"
+                    }
                 }
             } else {
-                $reportLines += "             Data Files: No active OST/PST files linked."
+                $certInfo = "N/A (Port Closed or Blocked)"
+                $certStatus = "FAIL"
+            }
+
+            $networkResults += [PSCustomObject]@{
+                Hostname    = $s.Hostname
+                Port        = $s.Port
+                Protocol    = $s.Type
+                Reachable   = $isReachable
+                CertInfo    = $certInfo
+                CertStatus  = $certStatus
+            }
+        }
+        Write-Progress -Activity "Testing Mail Server Reachability & SSL" -Completed
+    }
+
+    # Build clean dashboard output
+    $sep = "=========================================================================================="
+    $div = "------------------------------------------------------------------------------------------"
+
+    $reportLines = @()
+    $reportLines += $sep
+    $reportLines += "                       MAIL CLIENT PROFILE DIAGNOSTIC DASHBOARD                           "
+    $reportLines += "                       Report Generated: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')        "
+    $reportLines += $sep
+    $reportLines += ""
+
+    # Section 1: Application Status
+    $reportLines += "1. APPLICATIONS & RUNNING PROCESSES"
+    $reportLines += $div
+    $reportLines += ("{0,-22} | {1,-20} | {2}" -f "Application", "Status", "Installation Path")
+    $reportLines += $div
+
+    $outState = if ($outlookProc) { "RUNNING (PID: $($outlookProc.Id -join ','))" } else { "IDLE" }
+    $outPathStr = if ($outlookExe) { $outlookExe } else { "Not Found" }
+    $reportLines += ("{0,-22} | {1,-20} | {2}" -f "Microsoft Outlook", "[$outState]", $outPathStr)
+
+    $tbPids = if ($tbProc) { ($tbProc | ForEach-Object { $_.Id }) -join ',' } else { "" }
+    $tbState = if ($tbProc) { "RUNNING (PID: $tbPids)" } else { "IDLE" }
+    $tbPathStr = if ($tbExe) { $tbExe } else { "Not Found" }
+    $reportLines += ("{0,-22} | {1,-20} | {2}" -f "Mozilla Thunderbird", "[$tbState]", $tbPathStr)
+    $reportLines += $div
+    $reportLines += ""
+
+    # Section 2: Profiles Overview
+    $reportLines += "2. CLIENT PROFILES SUMMARY"
+    $reportLines += $div
+    $reportLines += ("{0,-14} | {1,-20} | {2,-9} | {3,-11} | {4,-14} | {5}" -f "Client", "Profile Name", "Default", "Data Size", "Health State", "Linked Accounts")
+    $reportLines += $div
+
+    $allProfiles = @()
+    foreach ($op in $outlookProfiles) {
+        $totSize = 0
+        foreach ($df in $op.DataFiles) { $totSize += $df.SizeMB }
+        $accCount = if ($op.Emails) { "$($op.Emails.Count) Accounts" } else { "None" }
+        $health = if ($totSize -gt 45000) { "OVERSIZE (>45GB)" } else { "Healthy" }
+        $isDef = if ($op.IsDefault) { "YES" } else { "NO" }
+        $reportLines += ("{0,-14} | {1,-20} | {2,-9} | {3,-11} | {4,-14} | {5}" -f "Outlook", $op.ProfileName, $isDef, "$totSize MB", $health, $accCount)
+    }
+
+    foreach ($tp in $tbProfiles) {
+        $accCount = if ($tp.Accounts -and $tp.Accounts.Count -gt 0) { "$($tp.Accounts.Count) Accounts" } else { "None" }
+        $health = if ($tp.HasLock) { "In-Use (Lock)" } elseif ($tp.IsOrphaned) { "Orphaned" } else { "Healthy" }
+        $isDef = if ($tp.IsDefault) { "YES" } else { "NO" }
+        $reportLines += ("{0,-14} | {1,-20} | {2,-9} | {3,-11} | {4,-14} | {5}" -f "Thunderbird", $tp.ProfileName, $isDef, "$($tp.SizeMB) MB", $health, $accCount)
+    }
+    $reportLines += $div
+    $reportLines += ""
+
+    # Section 3: Configured Mail Accounts & Routing
+    $reportLines += "3. CONFIGURED MAIL ACCOUNTS & ROUTING"
+    $reportLines += $div
+    $reportLines += ("{0,-30} | {1,-28} | {2,-28}" -f "Account Email Address", "Incoming (Host:Port)", "Outgoing (Host:Port)")
+    $reportLines += $div
+
+    $hasAccounts = $false
+    foreach ($tp in $tbProfiles) {
+        if ($tp.Accounts -and $tp.Accounts.Count -gt 0) {
+            foreach ($acc in $tp.Accounts) {
+                $hasAccounts = $true
+                $inStr  = "$($acc.IncomingHost):$($acc.IncomingPort) ($($acc.IncomingSecurity))"
+                $outStr = if ($acc.OutgoingHost) { "$($acc.OutgoingHost):$($acc.OutgoingPort) ($($acc.OutgoingSecurity))" } else { "None" }
+                $reportLines += ("{0,-30} | {1,-28} | {2,-28}" -f $acc.Email, $inStr, $outStr)
             }
         }
     }
-    $reportLines += ""
-
-    # Thunderbird Profiles
-    $tbProfiles = Get-ThunderbirdProfiles
-    $reportLines += "4. MOZILLA THUNDERBIRD PROFILES ($($tbProfiles.Count) Detected):"
-    if ($tbProfiles.Count -eq 0) {
-        $reportLines += "  [INFO] No Thunderbird profiles detected in profiles.ini."
-    } else {
-        foreach ($tp in $tbProfiles) {
-            $defMarker = if ($tp.IsDefault) { "[DEFAULT]" } else { "         " }
-            $lockMarker = if ($tp.HasLock) { " [LOCKED (parent.lock)]" } else { "" }
-            $orphMarker = if ($tp.IsOrphaned) { " [ORPHANED FOLDER]" } else { "" }
-
-            $reportLines += "  $defMarker Profile: '$($tp.ProfileName)'$lockMarker$orphMarker"
-            $reportLines += "             Path: $($tp.FolderPath) ($($tp.SizeMB) MB)"
-            if ($tp.Identities.Count -gt 0) {
-                $reportLines += "             Accounts: $($tp.Identities -join ', ')"
-            }
-            if ($tp.Servers.Count -gt 0) {
-                foreach ($s in $tp.Servers) {
-                    $reportLines += "             Server: [$($s.Type.ToUpper())] $($s.Hostname):$($s.Port) ($($s.SocketType)) | User: $($s.UserName)"
-                }
-            }
-        }
+    if (-not $hasAccounts) {
+        $reportLines += "  (No active configured mail accounts detected in profile preferences)"
     }
+    $reportLines += $div
     $reportLines += ""
 
-    # Network & Mail Server Verification
-    if (-not $OmitNetwork) {
-        $reportLines += "5. MAIL SERVER REACHABILITY & SSL/TLS TEST:"
-        
-        # Collect unique mail servers from Thunderbird profiles
-        $serversToTest = @()
-        foreach ($tp in $tbProfiles) {
-            foreach ($s in $tp.Servers) {
-                if ($s.Hostname -and $s.Hostname -ne "Local Folders") {
-                    $key = "$($s.Hostname):$($s.Port)"
-                    if (-not ($serversToTest | Where-Object { "$($_.Hostname):$($_.Port)" -eq $key })) {
-                        $serversToTest += $s
-                    }
-                }
-            }
-        }
+    # Section 4: Live Server Reachability & SSL Test
+    if (-not $OmitNetwork -and $networkResults.Count -gt 0) {
+        $reportLines += "4. LIVE SERVER REACHABILITY & SSL/TLS HEALTH CHECK"
+        $reportLines += $div
+        $reportLines += ("{0,-24} | {1,-6} | {2,-8} | {3,-12} | {4}" -f "Mail Server Host", "Port", "Type", "Reachability", "SSL/TLS Certificate Status")
+        $reportLines += $div
 
-        if ($serversToTest.Count -eq 0) {
-            $reportLines += "  [INFO] No configured remote servers extracted for live testing."
-            $reportLines += "         (You can run a custom server test from Menu Option 5)"
-        } else {
-            foreach ($s in $serversToTest) {
-                Write-Host "  Testing $($s.Hostname):$($s.Port)..." -NoNewline
-                $canConnect = Test-FastPortReachability -HostName $s.Hostname -Port $s.Port
-                if ($canConnect) {
-                    Write-Host " [REACHABLE]" -ForegroundColor Green
-                    $connStatus = "[PASS] Reachable"
-                    
-                    # Test SSL/TLS certificate if on an encrypted port
-                    $sslCheck = ""
-                    if ($s.Port -in @(993, 995, 465, 587, 443)) {
-                        $cert = Test-MailSslCertificate -HostName $s.Hostname -Port $s.Port
-                        if ($cert.Valid) {
-                            $sslCheck = " | TLS: Valid (Expires in $($cert.DaysLeft) days on $($cert.ExpiresOn))"
-                        } else {
-                            $sslCheck = " | TLS: [FAIL: $($cert.Error)]"
-                        }
-                    }
-                    $reportLines += "  [PASS] $($s.Type.ToUpper()) Server: $($s.Hostname):$($s.Port)$sslCheck"
-                } else {
-                    Write-Host " [FAILED]" -ForegroundColor Red
-                    $reportLines += "  [FAIL] $($s.Type.ToUpper()) Server: $($s.Hostname):$($s.Port) - Port unreachable or blocked!"
-                }
-            }
+        $reachableCount = 0
+        $certValidCount = 0
+
+        foreach ($nr in $networkResults) {
+            $reachStr = if ($nr.Reachable) { $reachableCount++; "[PASS]" } else { "[FAIL: CLOSED]" }
+            if ($nr.CertStatus -eq "OK") { $certValidCount++ }
+            $reportLines += ("{0,-24} | {1,-6} | {2,-8} | {3,-12} | {4}" -f $nr.Hostname, $nr.Port, $nr.Protocol, $reachStr, $nr.CertInfo)
         }
+        $reportLines += $div
         $reportLines += ""
+
+        # Executive Summary
+        $totalServers = $networkResults.Count
+        $reportLines += "SUMMARY: $reachableCount/$totalServers Servers Reachable | $certValidCount/$totalServers Valid SSL Certificates"
+    } else {
+        $reportLines += "4. SERVER CONNECTIVITY: (Skipped or no remote mail servers configured)"
     }
 
-    $reportLines += "=========================================================="
+    $reportLines += $sep
     $global:LastReportText = ($reportLines -join "`r`n")
     Write-Host $global:LastReportText
 }
