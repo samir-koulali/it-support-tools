@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Universal automated network diagnosis and repair for mail server connectivity.
 .DESCRIPTION
@@ -33,7 +33,7 @@ param(
 # ---------------------------------------------------------------------------
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     Write-Error "ERROR: This script must be run as Administrator. Right-click PowerShell and choose 'Run as Administrator'."
-    Exit 1
+    Stop-Transcript -ErrorAction SilentlyContinue | Out-Null; Exit 1
 }
 
 $logDir     = Join-Path $env:ProgramData "UniversalMailRepair"
@@ -309,13 +309,12 @@ if ($opMode -notin @("Rollback", "ViewStatus") -and (-not $TargetHosts -or $Targ
     $inputHost = Read-Host "Enter the mail server or domain to test (e.g., mail.domain.com or domain.com)"
     if ([string]::IsNullOrWhiteSpace($inputHost)) {
         Write-Warning "No hostname provided."
-        Stop-Transcript -ErrorAction SilentlyContinue | Out-Null
         if ($isInteractive) {
             Write-Host "`nReturning to Main Menu in 2 seconds..."
             Start-Sleep -Seconds 2
             continue
         } else {
-            Exit 1
+            Stop-Transcript -ErrorAction SilentlyContinue | Out-Null; Exit 1
         }
     }
     $TargetHosts = $inputHost -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne "" }
@@ -329,13 +328,12 @@ if ($opMode -eq "InspectDns") {
         Show-FullDnsRecords -Domain $target
     }
     Write-Host "`nDNS inspection complete." -ForegroundColor Cyan
-    Stop-Transcript -ErrorAction SilentlyContinue | Out-Null
     if ($isInteractive) {
         $navChoice = Read-Host "`nPress 1 to return to Main Menu, or 0 to Exit [Default: 1]"
         if ($navChoice -eq "0") { Exit 0 }
         continue
     } else {
-        Exit 0
+        Stop-Transcript -ErrorAction SilentlyContinue | Out-Null; Exit 0
     }
 }
 
@@ -375,13 +373,12 @@ if ($opMode -eq "ViewStatus") {
     }
     
     Write-Host "`nStatus check complete." -ForegroundColor Cyan
-    Stop-Transcript -ErrorAction SilentlyContinue | Out-Null
     if ($isInteractive) {
         $navChoice = Read-Host "`nPress 1 to return to Main Menu, or 0 to Exit [Default: 1]"
         if ($navChoice -eq "0") { Exit 0 }
         continue
     } else {
-        Exit 0
+        Stop-Transcript -ErrorAction SilentlyContinue | Out-Null; Exit 0
     }
 }
 
@@ -392,13 +389,12 @@ if ($opMode -eq "Rollback") {
     Write-Host "`n==========================================================" -ForegroundColor Cyan
     if (-not (Test-Path $backupFile)) {
         Write-Error "No backup file found at $backupFile. Nothing to roll back."
-        Stop-Transcript -ErrorAction SilentlyContinue | Out-Null
         if ($isInteractive) {
             Write-Host "`nReturning to Main Menu in 3 seconds..."
             Start-Sleep -Seconds 3
             continue
         } else {
-            Exit 1
+            Stop-Transcript -ErrorAction SilentlyContinue | Out-Null; Exit 1
         }
     }
 
@@ -443,13 +439,12 @@ if ($opMode -eq "Rollback") {
 
     Clear-DnsClientCache
     Write-Host "`nRollback complete." -ForegroundColor Cyan
-    Stop-Transcript -ErrorAction SilentlyContinue | Out-Null
     if ($isInteractive) {
         $navChoice = Read-Host "`nPress 1 to return to Main Menu, or 0 to Exit [Default: 1]"
         if ($navChoice -eq "0") { Exit 0 }
         continue
     } else {
-        Exit 0
+        Stop-Transcript -ErrorAction SilentlyContinue | Out-Null; Exit 0
     }
 }
 
@@ -468,13 +463,12 @@ if ($opMode -eq "Repair") {
 
     if (-not $activeAdapters) {
         Write-Warning "No active physical network adapter detected."
-        Stop-Transcript -ErrorAction SilentlyContinue | Out-Null
         if ($isInteractive) {
             Write-Host "`nReturning to Main Menu in 3 seconds..."
             Start-Sleep -Seconds 3
             continue
         } else {
-            Exit 1
+            Stop-Transcript -ErrorAction SilentlyContinue | Out-Null; Exit 1
         }
     }
 
@@ -683,12 +677,12 @@ if ([string]::IsNullOrWhiteSpace($copyChoice) -or $copyChoice -match "^[Yy]") {
     }
 }
 
-Stop-Transcript -ErrorAction SilentlyContinue | Out-Null
 if ($isInteractive) {
     $navChoice = Read-Host "`nPress 1 to return to Main Menu, or 0 to Exit [Default: 1]"
     if ($navChoice -eq "0") { Exit 0 }
     continue
 } else {
-    Exit 0
+    Stop-Transcript -ErrorAction SilentlyContinue | Out-Null; Exit 0
 }
 }
+
