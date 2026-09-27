@@ -369,8 +369,24 @@ if ($opMode -eq "Rollback") {
     Write-Host "[+] Rolling back DNS/IPv6 settings from backup..." -ForegroundColor Yellow
     $backup = @(Get-Content $backupFile -Raw | ConvertFrom-Json)
 
+    # Reset global IPv6 prefix policy to Windows defaults
+    try {
+        netsh interface ipv6 reset prefixpolicy | Out-Null
+        Write-Host "[+] Reset global IPv6 prefix policies to default." -ForegroundColor Green
+    } catch { }
+
     foreach ($entry in $backup) {
-        $alias = $entry.Adapter
+        # Fallback MAC lookup to handle renamed or re-enabled adapters
+        $targetAdapter = Get-NetAdapter | Where-Object { $_.MacAddress -eq $entry.MacAddress } | Select-Object -First 1
+        if (-not $targetAdapter) {
+            $targetAdapter = Get-NetAdapter -Name $entry.Adapter -ErrorAction SilentlyContinue
+        }
+        if (-not $targetAdapter) {
+            Write-Warning "    [!] Adapter '$($entry.Adapter)' not found or disconnected. Skipping."
+            continue
+        }
+        
+        $alias = $targetAdapter.Name
         try {
             if ($entry.IPv6WasEnabled) {
                 Enable-NetAdapterBinding -Name $alias -ComponentID ms_tcpip6 -ErrorAction Stop
@@ -429,6 +445,7 @@ if ($opMode -eq "Repair") {
 
         $backupEntries += [PSCustomObject]@{
             Adapter        = $alias
+            MacAddress     = $adapter.MacAddress
             OriginalDns    = $currentDnsConfig.ServerAddresses
             WasDhcp        = $wasDhcp
             IPv6WasEnabled = [bool]($currentBinding.Enabled)
@@ -450,6 +467,12 @@ if ($opMode -eq "Repair") {
             Write-Warning "    [!] Error assigning IPv4 DNS: $_"
         }
     }
+
+    # Prefer IPv4 over IPv6 Globally (Smooth Fallback)
+    try {
+        netsh interface ipv6 set prefixpolicy ::ffff:0:0/96 46 4 | Out-Null
+        Write-Host "`n[+] Global IPv6 prefix policy updated to prefer IPv4." -ForegroundColor Green
+    } catch { }
 
     ConvertTo-Json @($backupEntries) -Depth 3 | Set-Content -Path $backupFile -Encoding UTF8
     Write-Host "`n[+] Pre-change settings backed up to: $backupFile" -ForegroundColor DarkGray
@@ -515,13 +538,15 @@ foreach ($hostTarget in $TargetHosts) {
     }
 
     # Test DNS A Record
+    $targetIpForSockets = $hostTarget
     Write-Host "`n[*] Verifying Host Resolution..." -ForegroundColor Yellow
     try {
         $dnsResult = Resolve-DnsName -Name $hostTarget -Type A -ErrorAction Stop
-        $resolvedIPs = ($dnsResult | Where-Object { $_.IPAddress } | Select-Object -ExpandProperty IPAddress) -join ", "
-        if ($resolvedIPs) {
-            Write-Host "    [SUCCESS] Host resolved to IP: $resolvedIPs" -ForegroundColor Green
+        $resolvedIPs = @($dnsResult | Where-Object { $_.IPAddress } | Select-Object -ExpandProperty IPAddress)
+        if ($resolvedIPs.Count -gt 0) {
+            Write-Host "    [SUCCESS] Host resolved to IP: $($resolvedIPs -join ', ')" -ForegroundColor Green
             $results["DNS_A_Record"] = "PASS"
+            $targetIpForSockets = $resolvedIPs[0]
         } else {
             Write-Host "    [FAILURE] No IPv4 A records found." -ForegroundColor Red
             $results["DNS_A_Record"] = "FAIL"
@@ -531,13 +556,13 @@ foreach ($hostTarget in $TargetHosts) {
         $results["DNS_A_Record"] = "FAIL"
     }
 
-    # Test Ports
+    # Test Ports using Resolved IP (Prevents Socket DNS Hangs)
     Write-Host "`n[*] Testing Server Ports (Inbound, Outbound, Webmail, Panels)..." -ForegroundColor Yellow
     foreach ($serviceName in $portsToTest.Keys) {
         $portNum = $portsToTest[$serviceName]
         if ($portNum -eq 0) { continue }
 
-        if (Test-PortReachability -HostName $hostTarget -Port $portNum) {
+        if (Test-PortReachability -HostName $targetIpForSockets -Port $portNum) {
             Write-Host ("    {0,-22} (Port {1,4}) : CONNECTED" -f $serviceName, $portNum) -ForegroundColor Green
             $results[$serviceName] = "PASS"
         } else {
